@@ -1,0 +1,5 @@
+# ignore log
+/*.log
+
+# ignore user created png
+/*.png
