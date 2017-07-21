@@ -1,34 +1,53 @@
 import numpy as np
+import matplotlib.pyplot as plt
+import logging
 from math import inf
 from random import randint
 from scipy.sparse import lil_matrix
 from scipy.sparse.csgraph import shortest_path
 from sklearn.decomposition import PCA
 
+logging.basicConfig(filename='runtime.log',
+                    format='%(levelname)s:%(message)s',
+                    level=logging.INFO)
+
 
 class GraphDrawing:
 
-    def __init__(self, graph_file, dimension=5, first=None):
+    def __init__(self, dimension=50):
         self.dimension = dimension
-        self.first = first
 
+    def transform(self, graph_file, first_node=None):
+        logging.info('loading graph')
         self.graph = self.load_graph(graph_file)
-        self.max_node = self.find_max_node(self.graph)
-        self.distance_matrix = self.compute_distance_matrix(self.graph, self.max_node)
+        self.node_count = self.find_node_count(self.graph)
+        self.node_range = range(1, self.node_count + 1)
 
-    def draw(self):
+        logging.info('computing distance matrix')
+        self.distance_matrix = self.compute_distance_matrix(self.graph,
+                                                            self.node_count)
+
+        if first_node is None:
+            self.first_node = randint(0, self.node_count) + 1
+        else:
+            self.first_node = first_node
+
+        logging.info('finding pivots')
         self.pivot_nodes = self.choose_pivot_points(self.graph, self.dimension)
 
-        node_id_list = range(1, self.max_node + 1)
-        self.coordinates = list(map(
-            lambda i: tuple(self.compute_coordinates(i, self.pivot_nodes)),
-            node_id_list
+        logging.info('drawing graph in high dimensional space')
+        self.points = list(map(
+            lambda i: tuple(self.distance_matrix[i - 1, p - 1]
+                            for p in self.pivot_nodes),
+            self.node_range
         ))
 
-        self.projected = self.project_into_low_dimension(self.coordinates)
+        logging.info('project into a low dimension use PCA')
+        pca = PCA(n_components=2, copy=True)
+        self.transformed_points = pca.fit_transform(self.points)
 
     @staticmethod
-    def find_max_node(graph):
+    def find_node_count(graph):
         return max([
             *list(max(graph, key=lambda i: i[0]))[0:2],
             *list(max(graph, key=lambda i: i[1]))[0:2]])
@@ -44,27 +63,20 @@ class GraphDrawing:
     def choose_pivot_points(self, graph, dimension):
         pivots = []
         coordinates = []
-
-        # choose the first one randomly from the graph
-        if self.first is None:
-            first = randint(0, max_node) + 1
-        else:
-            first = self.first
-
-        pivots = [first]
+        pivots = [self.first_node]
 
         # find next by k-center problem
         for _ in range(0, dimension - 1):
             next_pivot = self.k_center(self.distance_matrix,
                                        pivots,
-                                       self.max_node)
+                                       self.node_count)
             pivots.append(next_pivot)
 
         return pivots
 
-    @classmethod
-    def compute_distance_matrix(cls, graph, max_node):
-        graph_matrix = lil_matrix((max_node, max_node))
+    @staticmethod
+    def compute_distance_matrix(graph, node_count):
+        graph_matrix = lil_matrix((node_count, node_count))
 
         for node_from, node_to, weight in graph:
             graph_matrix[node_from - 1, node_to - 1] = weight
@@ -74,10 +86,10 @@ class GraphDrawing:
                              directed=False,
                              unweighted=False)
 
-    @classmethod
-    def k_center(cls, distance_matrix, pivots, max_node):
+    def k_center(self, distance_matrix, pivots, node_count):
+
         distances = []
-        for i in range(1, max_node + 1):
+        for i in self.node_range:
             if i not in pivots:
                 matrix_i = i - 1
                 nearest_pivot = min(
@@ -88,8 +100,28 @@ class GraphDrawing:
 
         return max(distances, key=lambda d: d[1])[0]
 
-    def compute_coordinates(self, node_id, pivot_nodes):
-        return (self.distance_matrix[node_id - 1, p - 1] for p in pivot_nodes)
+    def plot(self, filename):
+        fig = plt.figure(figsize=(6, 6))
+        ax = fig.add_subplot(111, frame_on=False)
 
-    def project_into_low_dimension(self, points):
-        X = np.matrix(points)
+        ax.xaxis.set_visible(False)
+        ax.yaxis.set_visible(False)
+
+        logging.info('plot start')
+        ax.scatter(self.transformed_points[:,0],
+                   self.transformed_points[:,1],
+                   s=1,
+                   facecolor="black",
+                   linewidth=0)
+
+        for node_from, node_to, weight in self.graph:
+            coord_from = list(self.transformed_points[node_from - 1])
+            coord_to = list(self.transformed_points[node_to - 1])
+            ax.plot([coord_from[0], coord_to[0]],
+                    [coord_from[1], coord_to[1]],
+                    linewidth=0.5,
+                    color='black')
+
+        logging.info('plot end')
+        plt.savefig(filename, dpi=600)
+        plt.close()
